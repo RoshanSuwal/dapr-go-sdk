@@ -199,6 +199,8 @@ type Client interface {
 	// WithTraceID adds existing trace ID to the outgoing context.
 	WithTraceID(ctx context.Context, id string) context.Context
 
+	WithUserDefinedMetadata(ctx context.Context) context.Context
+
 	// WithAuthToken sets Dapr API token on the instantiated client.
 	WithAuthToken(token string)
 
@@ -487,6 +489,28 @@ func (c *GRPCClient) WithTraceID(ctx context.Context, id string) context.Context
 	logger.Printf("using trace parent ID: %s", id)
 	md := metadata.Pairs(traceparentKey, id)
 	return metadata.NewOutgoingContext(ctx, md)
+}
+
+const (
+	daprHeaderPrefix    = "dapr-"
+	daprHeaderBinSuffix = "-bin"
+	tracerName          = "dapr-diagnostics"
+)
+
+func (c *GRPCClient) WithUserDefinedMetadata(ctx context.Context) context.Context {
+	md, ok := metadata.FromIncomingContext(ctx)
+	daprMetadata := make(map[string]string, len(md))
+	if !ok {
+		return ctx
+	}
+	for k, v := range md {
+		if strings.HasPrefix(k, daprHeaderPrefix) && !strings.HasSuffix(k, daprHeaderBinSuffix) {
+			daprMetadata[k] = v[0]
+		} else if strings.EqualFold(k, traceparentKey) {
+			daprMetadata[k] = v[0]
+		}
+	}
+	return metadata.NewOutgoingContext(ctx, metadata.New(daprMetadata))
 }
 
 // Shutdown the sidecar.

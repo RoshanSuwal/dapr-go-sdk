@@ -18,6 +18,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"google.golang.org/grpc/metadata"
 	"strings"
 
 	"google.golang.org/protobuf/types/known/anypb"
@@ -76,6 +77,7 @@ func hasRequiredInvokeArgs(appID, methodName, verb string) error {
 
 // InvokeMethod invokes service without raw data ([]byte).
 func (c *GRPCClient) InvokeMethod(ctx context.Context, appID, methodName, verb string) (out []byte, err error) {
+	ctx = metadata.AppendToOutgoingContext(ctx, "dapr-app-id", appID)
 	if err := hasRequiredInvokeArgs(appID, methodName, verb); err != nil {
 		return nil, fmt.Errorf("missing required parameter: %w", err)
 	}
