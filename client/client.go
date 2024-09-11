@@ -339,12 +339,13 @@ func NewClientWithAddressContext(ctx context.Context, address string) (client Cl
 	}
 
 	at := &authToken{}
-
+	u, s := withMetadataInterceptor()
 	opts := []grpc.DialOption{
 		grpc.WithUserAgent(userAgent()),
 		grpc.WithBlock(), //nolint:staticcheck
 		authTokenUnaryInterceptor(at),
 		authTokenStreamInterceptor(at),
+		u, s,
 	}
 
 	if parsedAddress.TLS {
@@ -390,12 +391,14 @@ func NewClientWithSocket(socket string) (client Client, err error) {
 	at := &authToken{}
 	logger.Printf("dapr client initializing for: %s", socket)
 	addr := "unix://" + socket
+	u, s := withMetadataInterceptor()
 	conn, err := grpc.Dial( //nolint:staticcheck
 		addr,
 		grpc.WithTransportCredentials(insecure.NewCredentials()),
 		grpc.WithUserAgent(userAgent()),
 		authTokenUnaryInterceptor(at),
 		authTokenStreamInterceptor(at),
+		u, s,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("error creating connection to '%s': %w", addr, err)
@@ -456,6 +459,34 @@ func authTokenStreamInterceptor(authToken *authToken) grpc.DialOption {
 		}
 		return streamer(ctx, desc, cc, method, opts...)
 	})
+}
+
+func withMetadataInterceptor() (grpc.DialOption, grpc.DialOption) {
+	return grpc.WithUnaryInterceptor(func(ctx context.Context, method string, req, reply interface{}, cc *grpc.ClientConn, invoker grpc.UnaryInvoker, opts ...grpc.CallOption) error {
+			md, ok := metadata.FromIncomingContext(ctx)
+			if !ok {
+				md = make(metadata.MD)
+			}
+			omd, ok := metadata.FromOutgoingContext(ctx)
+			if !ok {
+				omd = make(metadata.MD)
+			}
+			cmd := metadata.Join(omd, md)
+			ctx = metadata.NewOutgoingContext(ctx, cmd)
+			return invoker(ctx, method, req, reply, cc, opts...)
+		}), grpc.WithStreamInterceptor(func(ctx context.Context, desc *grpc.StreamDesc, cc *grpc.ClientConn, method string, streamer grpc.Streamer, opts ...grpc.CallOption) (grpc.ClientStream, error) {
+			md, ok := metadata.FromIncomingContext(ctx)
+			if !ok {
+				md = make(metadata.MD)
+			}
+			omd, ok := metadata.FromOutgoingContext(ctx)
+			if !ok {
+				omd = make(metadata.MD)
+			}
+			cmd := metadata.Join(omd, md)
+			ctx = metadata.NewOutgoingContext(ctx, cmd)
+			return streamer(ctx, desc, cc, method, opts...)
+		})
 }
 
 // GRPCClient is the gRPC implementation of Dapr client.
