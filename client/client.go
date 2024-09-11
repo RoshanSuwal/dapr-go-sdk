@@ -108,9 +108,10 @@ type Client interface {
 // Note, this default factory function creates Dapr client only once. All subsequent invocations
 // will return the already created instance. To create multiple instances of the Dapr client,
 // use one of the parameterized factory functions:
-//   NewClientWithPort(port string) (client Client, err error)
-//   NewClientWithAddress(address string) (client Client, err error)
-//   NewClientWithConnection(conn *grpc.ClientConn) Client
+//
+//	NewClientWithPort(port string) (client Client, err error)
+//	NewClientWithAddress(address string) (client Client, err error)
+//	NewClientWithConnection(conn *grpc.ClientConn) Client
 func NewClient() (client Client, err error) {
 	port := os.Getenv(daprPortEnvVarName)
 	if port == "" {
@@ -140,7 +141,9 @@ func NewClientWithAddress(address string) (client Client, err error) {
 		return nil, errors.New("nil address")
 	}
 	logger.Printf("dapr client initializing for: %s", address)
-	conn, err := grpc.Dial(address, grpc.WithInsecure())
+	u, s := withMetadataInterceptor()
+	conn, err := grpc.Dial(address, grpc.WithInsecure(),
+		u, s)
 	if err != nil {
 		return nil, errors.Wrapf(err, "error creating connection to '%s': %v", address, err)
 	}
@@ -180,6 +183,34 @@ func (c *GRPCClient) WithAuthToken(token string) {
 	c.mux.Lock()
 	c.authToken = token
 	c.mux.Unlock()
+}
+
+func withMetadataInterceptor() (grpc.DialOption, grpc.DialOption) {
+	return grpc.WithUnaryInterceptor(func(ctx context.Context, method string, req, reply interface{}, cc *grpc.ClientConn, invoker grpc.UnaryInvoker, opts ...grpc.CallOption) error {
+			md, ok := metadata.FromIncomingContext(ctx)
+			if !ok {
+				md = make(metadata.MD)
+			}
+			omd, ok := metadata.FromOutgoingContext(ctx)
+			if !ok {
+				omd = make(metadata.MD)
+			}
+			cmd := metadata.Join(omd, md)
+			ctx = metadata.NewOutgoingContext(ctx, cmd)
+			return invoker(ctx, method, req, reply, cc, opts...)
+		}), grpc.WithStreamInterceptor(func(ctx context.Context, desc *grpc.StreamDesc, cc *grpc.ClientConn, method string, streamer grpc.Streamer, opts ...grpc.CallOption) (grpc.ClientStream, error) {
+			md, ok := metadata.FromIncomingContext(ctx)
+			if !ok {
+				md = make(metadata.MD)
+			}
+			omd, ok := metadata.FromOutgoingContext(ctx)
+			if !ok {
+				omd = make(metadata.MD)
+			}
+			cmd := metadata.Join(omd, md)
+			ctx = metadata.NewOutgoingContext(ctx, cmd)
+			return streamer(ctx, desc, cc, method, opts...)
+		})
 }
 
 // WithTraceID adds existing trace ID to the outgoing context
